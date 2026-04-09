@@ -15,12 +15,14 @@ type Source struct {
 	timeTaken time.Duration
 	errors    int
 	results   int
+	requests  int
 }
 
 func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Session) <-chan subscraping.Result {
 	results := make(chan subscraping.Result)
 	s.errors = 0
 	s.results = 0
+	s.requests = 0
 
 	go func() {
 		defer func(startTime time.Time) {
@@ -28,6 +30,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			close(results)
 		}(time.Now())
 
+		s.requests++
 		resp, err := s.fetch(ctx, domain, session)
 		if err != nil {
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
@@ -41,8 +44,12 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 		for sc.Scan() {
 			if line := sc.Text(); line != "" {
 				for _, sub := range session.Extractor.Extract(line) {
-					results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: sub}
-					s.results++
+					select {
+					case <-ctx.Done():
+						return
+					case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: sub}:
+						s.results++
+					}
 				}
 			}
 		}
@@ -70,13 +77,16 @@ func (s *Source) fetch(ctx context.Context, domain string, session *subscraping.
 func (s *Source) Name() string              { return "submd" }
 func (s *Source) IsDefault() bool           { return true }
 func (s *Source) HasRecursiveSupport() bool { return false }
-func (s *Source) NeedsKey() bool            { return false }
-func (s *Source) AddApiKeys(keys []string)  { s.apiKeys = keys }
+
+func (s *Source) KeyRequirement() subscraping.KeyRequirement { return subscraping.OptionalKey }
+func (s *Source) NeedsKey() bool                             { return s.KeyRequirement() == subscraping.RequiredKey }
+func (s *Source) AddApiKeys(keys []string)                   { s.apiKeys = keys }
 
 func (s *Source) Statistics() subscraping.Statistics {
 	return subscraping.Statistics{
 		Errors:    s.errors,
 		Results:   s.results,
+		Requests:  s.requests,
 		TimeTaken: s.timeTaken,
 	}
 }
