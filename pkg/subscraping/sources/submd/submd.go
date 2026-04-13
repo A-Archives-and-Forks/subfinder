@@ -33,8 +33,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 		s.requests++
 		resp, err := s.fetch(ctx, domain, session)
 		if err != nil {
-			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
-			s.errors++
+			s.trySendError(ctx, results, err)
 			session.DiscardHTTPResponse(resp)
 			return
 		}
@@ -48,26 +47,39 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 		for sc.Scan() {
 			if line := sc.Text(); line != "" {
 				for _, sub := range session.Extractor.Extract(line) {
-					select {
-					case <-ctx.Done():
+					if !s.trySendResult(ctx, results, sub) {
 						return
-					case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: sub}:
-						s.results++
 					}
 				}
 			}
 		}
 		if err := sc.Err(); err != nil {
-			select {
-			case <-ctx.Done():
-				return
-			case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}:
-				s.errors++
-			}
+			s.trySendError(ctx, results, err)
 		}
 	}()
 
 	return results
+}
+
+// trySendResult emits a subdomain result, honoring ctx cancellation.
+// Returns false if the context was cancelled and the caller should stop.
+func (s *Source) trySendResult(ctx context.Context, ch chan<- subscraping.Result, value string) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case ch <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: value}:
+		s.results++
+		return true
+	}
+}
+
+// trySendError emits an error result, honoring ctx cancellation.
+func (s *Source) trySendError(ctx context.Context, ch chan<- subscraping.Result, err error) {
+	select {
+	case <-ctx.Done():
+	case ch <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}:
+		s.errors++
+	}
 }
 
 // fetch issues the API call, upgrades to Bearer auth when a key is available.
