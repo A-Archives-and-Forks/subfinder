@@ -58,7 +58,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 		}
 
 		SubdomainList := jsoniter.Get(body, "Result").Get("ContributingSubdomainList")
-		if !SubdomainList.ToBool() {
+		if SubdomainList.ValueType() != jsoniter.ArrayValue {
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("chinaz: unexpected response shape, missing Result.ContributingSubdomainList")}
 			s.errors++
 			return
