@@ -68,9 +68,14 @@ func (a *Agent) EnumerateSubdomainsWithCtx(ctx context.Context, domain string, p
 			go func(source subscraping.Source) {
 				defer wg.Done()
 				ctxWithValue := context.WithValue(ctx, subscraping.CtxSourceArg, source.Name())
-				for resp := range source.Run(ctxWithValue, domain, session) {
+				sourceResults := source.Run(ctxWithValue, domain, session)
+				for resp := range sourceResults {
 					select {
 					case <-ctx.Done():
+						// stop forwarding but keep draining so the source goroutine
+						// is never blocked on a send and can exit instead of leaking
+						for range sourceResults {
+						}
 						return
 					case results <- resp:
 					}
